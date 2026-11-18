@@ -1,0 +1,334 @@
+RUTA DE TRABAJO FINAL PARA LA SALIDA A PRODUCCIÓN DE JOPETS
+============================================================
+
+ESTADO ACTUAL
+-------------
+- Backend Django implementado con autenticación JWT, tenants, reservas, marketplace, chat WebSocket y webhook.
+- Frontend Flutter conectado a la API.
+- Panel global Next.js creado.
+- Endpoints implementados para wallet, notificaciones, agenda, edición de mascotas, vacunas e historial médico.
+- RBAC básico para dueños y proveedores.
+- Webhook preparado para cambiar una reserva a estado paid.
+- flutter analyze ejecutado sin errores.
+- Commit local actual:
+  c8af781 - Fix: Complete real API resources RBAC and payment webhook flow
+- El push a GitHub debe repetirse cuando exista autenticación GitHub habilitada.
+
+FASE 1 - CONGELAR Y RESPALDAR EL CÓDIGO
+----------------------------------------
+1. Crear la rama de release:
+   git checkout -b release/0.1.0
+
+2. Configurar y verificar el remoto GitHub:
+   git remote -v
+
+3. Subir el código:
+   git push origin main
+   git push origin release/0.1.0
+
+4. Crear la etiqueta de release candidate:
+   git tag -a v0.1.0-rc1 -m "Jopets release candidate 1"
+   git push origin v0.1.0-rc1
+
+RESULTADO ESPERADO:
+El código queda respaldado, versionado y recuperable.
+
+FASE 2 - PREPARAR EL VPS
+------------------------
+Instalar y configurar:
+- Docker Engine.
+- Docker Compose.
+- PostgreSQL 16.
+- Redis.
+- Nginx.
+- Certbot.
+- Dominio apuntando al VPS.
+- Firewall con únicamente los puertos necesarios.
+
+Puertos recomendados:
+- 80 para HTTP.
+- 443 para HTTPS.
+- SSH restringido por IP o llave.
+
+Crear el archivo .env real en el VPS. No subirlo a GitHub.
+
+Variables mínimas:
+DJANGO_SECRET_KEY=
+DJANGO_DEBUG=false
+ALLOWED_HOSTS=
+POSTGRES_DB=
+POSTGRES_USER=
+POSTGRES_PASSWORD=
+POSTGRES_HOST=
+POSTGRES_PORT=5432
+REDIS_URL=redis://redis:6379/0
+PAYMENT_WEBHOOK_SECRET=
+API_BASE_URL=https://api.TU_DOMINIO.com
+
+También configurar:
+- CORS permitido.
+- CSRF trusted origins.
+- Dominio del panel global.
+- Configuración de correo.
+- Credenciales de almacenamiento si se utilizan.
+- Credenciales de pagos únicamente en staging inicialmente.
+
+FASE 3 - BASE DE DATOS Y MULTI-TENANT
+-------------------------------------
+1. Ejecutar migraciones:
+   docker compose run --rm backend python manage.py migrate
+
+2. Verificar:
+   docker compose run --rm backend python manage.py check
+
+3. Activar realmente RLS en PostgreSQL.
+
+4. Confirmar que las tablas críticas tengan:
+   - ENABLE ROW LEVEL SECURITY.
+   - FORCE ROW LEVEL SECURITY.
+   - Políticas USING.
+   - Políticas WITH CHECK.
+   - Contexto jopets.tenant_id.
+   - Contexto jopets.parent_tenant_id.
+
+5. Crear dos tenants de prueba: Tenant A y Tenant B.
+
+6. Verificar aislamiento:
+   - Un usuario de A no puede leer mascotas de B.
+   - Un usuario de A no puede leer reservas de B.
+   - Un proveedor de A no puede consultar wallet de B.
+   - Un proveedor recibe 403 en endpoints exclusivos del dueño.
+   - Un usuario global solo accede a las vistas administrativas autorizadas.
+
+RESULTADO ESPERADO:
+La base de datos está migrada y el aislamiento está demostrado con pruebas reales.
+
+FASE 4 - PRUEBAS DEL BACKEND
+----------------------------
+Ejecutar:
+   docker compose run --rm backend python manage.py test
+
+Probar como mínimo:
+- Login correcto.
+- Login inválido.
+- Registro.
+- JWT expirado.
+- Rol incorrecto.
+- Tenant incorrecto.
+- Acceso cruzado entre tenants.
+- CRUD de mascotas.
+- PATCH de mascota.
+- Vacunas.
+- Historial médico.
+- Creación de reserva.
+- Agenda del proveedor.
+- Wallet.
+- Notificaciones.
+- QR.
+- WebSocket.
+- Webhook duplicado.
+- Webhook con firma inválida.
+- Webhook con reserva válida.
+- Cambio de reserva a paid.
+
+Revisar especialmente:
+- Asignación real de provider_id.
+- Estados válidos de las reservas.
+- Creación de wallet por proveedor.
+- Creación de transacciones y allocations.
+- Relación entre tenant_id y parent_tenant_id.
+
+FASE 5 - REDIS, ASGI Y CHAT
+---------------------------
+1. Confirmar Redis:
+   redis-cli ping
+
+La respuesta esperada es:
+   PONG
+
+2. Ejecutar el backend mediante ASGI/Daphne:
+   daphne -b 0.0.0.0 -p 8000 config.asgi:application
+
+3. Crear dos usuarios reales:
+   - Un dueño.
+   - Un proveedor.
+
+4. Verificar:
+   - Ambos pertenecen al tenant correcto.
+   - La reserva contiene provider_id.
+   - El WebSocket recibe tenantId y peerId.
+   - El mensaje llega en tiempo real.
+   - El mensaje se guarda en la base de datos.
+   - Un usuario no autorizado es rechazado.
+   - El JWT expirado cierra la conexión.
+
+FASE 6 - PAGOS EN STAGING
+-------------------------
+1. Elegir una sola pasarela inicial:
+   - Stripe, PayPhone o Kushki.
+
+2. Mantener SandboxAdapter únicamente durante las pruebas internas.
+
+3. Implementar el flujo completo:
+   Checkout Flutter
+   -> Crear intención de pago
+   -> Proveedor de pagos
+   -> Webhook firmado
+   -> Transacción
+   -> Reserva paid
+   -> Splits de proveedor/subdueño/SIMA
+   -> Wallet del proveedor
+
+4. Verificar:
+   - Idempotencia.
+   - Firma del webhook.
+   - Eventos duplicados.
+   - Pago rechazado.
+   - Pago cancelado.
+   - Reembolso.
+   - Moneda.
+   - Comisiones.
+   - Redondeo Decimal.
+   - Registro exacto de los montos.
+
+IMPORTANTE:
+El webhook actualmente puede cambiar la reserva a paid, pero debe conectarse al flujo financiero completo de transacciones, comisiones y wallet.
+
+FASE 7 - PANEL GLOBAL
+---------------------
+Probar:
+- Login exclusivo de admin_global.
+- Rechazo de usuarios normales.
+- Dashboard.
+- Auditoría.
+- Listado de tenants.
+- Creación de tenant.
+- Aprobación y rechazo de tenants.
+- Manejo de errores de API.
+- NEXT_PUBLIC_API_BASE_URL.
+- HTTPS.
+- CORS.
+
+Las métricas que todavía aparezcan como incomplete deben conectarse a datos reales antes de presentarlas como definitivas.
+
+FASE 8 - COMPILACIÓN FLUTTER RELEASE
+------------------------------------
+Configurar la URL real de la API:
+
+flutter build apk --release \
+  --dart-define=API_BASE_URL=https://api.TU_DOMINIO.com \
+  --dart-define=JOPETS_TENANT_ID=TU_TENANT_ID
+
+Para generar el archivo de publicación:
+
+flutter build appbundle --release \
+  --dart-define=API_BASE_URL=https://api.TU_DOMINIO.com \
+  --dart-define=JOPETS_TENANT_ID=TU_TENANT_ID
+
+Configurar firma Android:
+- Crear keystore de producción.
+- Configurar key.properties.
+- Configurar firma release.
+- Guardar el keystore en un lugar seguro.
+- No subir el keystore a GitHub.
+
+FASE 9 - PRUEBAS EN DISPOSITIVOS
+--------------------------------
+Probar en:
+- Android ARM64 moderno.
+- Android de gama media.
+- Wi-Fi.
+- Datos móviles.
+- Sin conexión.
+- JWT expirado.
+
+Casos mínimos:
+- Arranque.
+- Login.
+- Registro.
+- Mascotas.
+- Edición de mascota.
+- QR.
+- Marketplace.
+- Reserva.
+- Historial.
+- Chat.
+- Notificaciones.
+- Agenda.
+- Wallet.
+- Logout.
+- Reapertura de sesión.
+
+FASE 10 - SEGURIDAD Y OPERACIÓN
+-------------------------------
+Antes de producción:
+- DEBUG=false.
+- Secretos fuera de Git.
+- HTTPS obligatorio.
+- CORS limitado.
+- Rate limiting para login.
+- Bloqueo de intentos repetidos.
+- Renovación y expiración correcta de JWT.
+- Validación de payloads.
+- Auditoría administrativa.
+- Backups cifrados.
+- Restauración de backups probada.
+- Logs estructurados.
+- Monitoreo de Django.
+- Monitoreo de Nginx.
+- Monitoreo de Redis.
+- Monitoreo de PostgreSQL.
+- Alertas por errores 4xx y 5xx.
+- Alertas por fallos de webhook.
+- Alertas por fallos de WebSocket.
+
+FASE 11 - PILOTO CONTROLADO
+---------------------------
+1. Desplegar en staging privado.
+2. Probar con usuarios internos.
+3. Probar con un solo tenant.
+4. Monitorear durante 24 a 72 horas.
+5. Corregir errores.
+6. Repetir pruebas de pagos.
+7. Generar el APK/AAB final.
+8. Publicar progresivamente.
+9. Activar pagos reales después de validar completamente el sandbox.
+
+NO PASAR A PRODUCCIÓN SI:
+-------------------------
+- RLS no está probado.
+- PostgreSQL no está migrado.
+- Redis no está operativo.
+- WebSocket no fue probado con dos usuarios reales.
+- Webhook no fue probado con firma válida.
+- La APK/AAB no está firmada.
+- Flutter apunta a localhost.
+- DEBUG=true.
+- Hay secretos en el repositorio.
+- Existe login simulado.
+- Wallet muestra saldos ficticios.
+- El panel permite acceso sin admin_global.
+- No existe backup probado.
+
+ORDEN INMEDIATO RECOMENDADO
+---------------------------
+1. Habilitar GitHub y subir el commit c8af781.
+2. Preparar el VPS.
+3. Configurar variables de entorno.
+4. Ejecutar migraciones reales.
+5. Activar y probar RLS.
+6. Ejecutar pruebas backend contra PostgreSQL.
+7. Verificar Redis, ASGI y WebSocket.
+8. Corregir y validar la asignación real de proveedores.
+9. Completar transacciones, comisiones y wallet.
+10. Configurar la firma Android.
+11. Generar APK/AAB release.
+12. Probar en dispositivos reales.
+13. Ejecutar piloto con un tenant.
+14. Publicar producción.
+
+VEREDICTO ACTUAL
+----------------
+Jopets está en etapa de release candidate técnico, no todavía en producción.
+
+La prioridad final no es crear más pantallas. La prioridad es validar infraestructura real, aislamiento multi-tenant, pagos, WebSocket, firma Android y pruebas integrales.
